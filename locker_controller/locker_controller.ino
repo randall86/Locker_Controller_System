@@ -68,8 +68,11 @@ SimpleTimer timer;
 
 int g_LEDcount = 0;
 int g_timeout_value = 0; //0 - timer disabled
+int g_lock_timer = 0;
+int g_alarm_timer = 0;
 bool g_door_is_opened = false;
 bool g_unlock_door = false;
+bool g_tested_once = false;
 
 void initLEDsOnExpandr(DTIOI2CtoParallelConverter *io_expandr)
 {
@@ -102,10 +105,10 @@ void initLEDsOnExpandr(DTIOI2CtoParallelConverter *io_expandr)
 unsigned char getSlaveAddr()
 {
     unsigned char mask = 0x01;
-    unsigned char bit00 = (mask & digitalRead(ADDRBIT0_PIN));
-    unsigned char bit01 = (mask & digitalRead(ADDRBIT1_PIN));
-    unsigned char bit02 = (mask & digitalRead(ADDRBIT2_PIN));
-    unsigned char bit03 = (mask & digitalRead(ADDRBIT3_PIN));
+    unsigned char bit00 = (mask & !digitalRead(ADDRBIT0_PIN));
+    unsigned char bit01 = (mask & !digitalRead(ADDRBIT1_PIN));
+    unsigned char bit02 = (mask & !digitalRead(ADDRBIT2_PIN));
+    unsigned char bit03 = (mask & !digitalRead(ADDRBIT3_PIN));
 
     return ((bit03 << 3) | (bit02 << 2) | (bit01 << 1) | bit00);
 }
@@ -114,17 +117,49 @@ unsigned char getSlaveAddr()
 int getTimerValue()
 {
     unsigned char mask = 0x01;
-    unsigned char bit00 = (mask & digitalRead(TIMERBIT0_PIN));
-    unsigned char bit01 = (mask & digitalRead(TIMERBIT1_PIN));
+    unsigned char bit00 = (mask & !digitalRead(TIMERBIT0_PIN));
+    unsigned char bit01 = (mask & !digitalRead(TIMERBIT1_PIN));
     
     return ((bit01 << 1) | bit00);
+}
+
+void turnOnOffAllLEDs()
+{
+    //turn on all the LEDS
+    for(int num_LED = 0; num_LED <= LED_60; num_LED++)
+    {
+        if(g_LEDMappingArr[num_LED].expandr_bus == 0)
+        {
+            g_LEDMappingArr[num_LED].expandr->digitalWrite0(g_LEDMappingArr[num_LED].expandr_pin, LOW); 
+        }
+        else // g_LEDMappingArr[num_LED].expandr_bus == 1
+        {
+            g_LEDMappingArr[num_LED].expandr->digitalWrite1(g_LEDMappingArr[num_LED].expandr_pin, LOW);
+        }
+        
+        delay(500);
+    }
+    
+    //turn off all the LEDS
+    for(int num_LED = 0; num_LED <= LED_60; num_LED++)
+    {
+        if(g_LEDMappingArr[num_LED].expandr_bus == 0)
+        {
+            g_LEDMappingArr[num_LED].expandr->digitalWrite0(g_LEDMappingArr[num_LED].expandr_pin, HIGH); 
+        }
+        else // g_LEDMappingArr[num_LED].expandr_bus == 1
+        {
+            g_LEDMappingArr[num_LED].expandr->digitalWrite1(g_LEDMappingArr[num_LED].expandr_pin, HIGH);
+        }
+        
+        delay(500);
+    }
 }
 
 void turnOffAllLEDs()
 {
     for(int num_LED = 0; num_LED <= LED_60; num_LED++)
     {
-        //toggle the LEDs according to the Modbus register values
         if(g_LEDMappingArr[num_LED].expandr_bus == 0)
         {
             g_LEDMappingArr[num_LED].expandr->digitalWrite0(g_LEDMappingArr[num_LED].expandr_pin, HIGH); 
@@ -167,11 +202,11 @@ void setup()
     pinMode(ADDRBIT1_PIN, INPUT);
     pinMode(ADDRBIT2_PIN, INPUT);
     pinMode(ADDRBIT3_PIN, INPUT);
-
+    
     //initialize the timer pins
     pinMode(TIMERBIT0_PIN, INPUT);
     pinMode(TIMERBIT1_PIN, INPUT);
-
+    
     //initialize the LED pins
     initLEDsOnExpandr(&g_ioExpandrU2);
     initLEDsOnExpandr(&g_ioExpandrU3);
@@ -181,21 +216,21 @@ void setup()
     //initialize the MAG_DOOR - solenoid lock
     g_ioExpandrU5.pinMode1(MAG_DOOR_PIN, LOW);
     g_ioExpandrU5.digitalWrite1(MAG_DOOR_PIN, LOW);
-
+    
     //initialize the ALARM
     g_ioExpandrU5.pinMode1(ALARM_PIN, LOW);
     g_ioExpandrU5.digitalWrite1(ALARM_PIN, LOW);
-
+    
     //initialize the DOOR_SW
     g_ioExpandrU5.pinMode1(DOOR_SW_PIN, HIGH);
-
+    
     //initialize the SPARE
     g_ioExpandrU5.pinMode1(SPARE_PIN, LOW);
     g_ioExpandrU5.digitalWrite1(SPARE_PIN, LOW);
-
+    
     //get the timer's timeout value
     g_timeout_value = getTimerValue();
-
+    
     // parameters(long baudrate, unsigned char ID, unsigned char transmit enable pin, unsigned int holding registers size, unsigned char low latency)
     // The transmit enable pin is used in half duplex communication to activate a MAX485 or similar
     // to deactivate this mode use any value < 2 because 0 & 1 is reserved for Rx & Tx.
@@ -214,17 +249,17 @@ void loop()
     // count since the slave started. You don't have to use it but it's useful
     // for fault finding by the modbus master.
     holdingRegs[TOTAL_ERRORS] = modbus_update(holdingRegs);
-
+    
     // this is where the "polling" occurs
     timer.run();
-
+    
 #ifdef HW_TEST
     byte door_switch = DOOR_SW_PIN;
     if(g_ioExpandrU5.digitalRead1(door_switch))
     {
         //attach Door switch pin to its Modbus register
         holdingRegs[DOOR_SW] = door_switch;
-
+        
         if(door_switch)
         {
             //toggle the LEDs
@@ -259,9 +294,15 @@ void loop()
 #else
     if(holdingRegs[TEST_MODE]) //run test mode
     {
+        if(!g_tested_once)
+        {
+            turnOnOffAllLEDs(); //test on/off all LEDs sequentially
+            g_tested_once = true;
+        }
+        
+        //toggle the LEDs according to the Modbus register values
         for(int num_LED = 0; num_LED <= LED_60; num_LED++)
         {
-            //toggle the LEDs according to the Modbus register values
             if(g_LEDMappingArr[num_LED].expandr_bus == 0)
             {
                 g_LEDMappingArr[num_LED].expandr->digitalWrite0(g_LEDMappingArr[num_LED].expandr_pin, (HIGH - holdingRegs[num_LED])); 
@@ -271,23 +312,23 @@ void loop()
                 g_LEDMappingArr[num_LED].expandr->digitalWrite1(g_LEDMappingArr[num_LED].expandr_pin, (HIGH - holdingRegs[num_LED]));
             }
         }
-            
+        
         //toggle the Magnetic Door lock according its Modbus register value
         g_ioExpandrU5.digitalWrite1(MAG_DOOR_PIN, holdingRegs[MAG_DOOR]);
-
+        
         //toggle the Alarm/Buzzer according its Modbus register value
         g_ioExpandrU5.digitalWrite1(ALARM_PIN, holdingRegs[ALARM]);
         
         //toggle the Spare relay according its Modbus register value
         g_ioExpandrU5.digitalWrite1(SPARE_PIN, holdingRegs[SPARE_REG]);
-
+        
         byte door_switch = DOOR_SW_PIN;
         if(g_ioExpandrU5.digitalRead1(door_switch))
         {
             //attach Door switch pin to its Modbus register
             holdingRegs[DOOR_SW] = door_switch;
         }
-
+        
         //attach the address and timer jumper state to its Modbus register
         holdingRegs[ADDR_0] = digitalRead(ADDRBIT0_PIN);
         holdingRegs[ADDR_1] = digitalRead(ADDRBIT1_PIN);
@@ -298,13 +339,15 @@ void loop()
     }
     else //run normal mode
     {
+        g_tested_once = false; //reset the LED tests
+        
         if(!g_unlock_door) //check for LEDs state if door is locked
         {
             //attach the LED pins to the Modbus registers
             for(int num_LED = 0; num_LED <= LED_60; num_LED++)
             {
                 byte led_state = (HIGH - holdingRegs[num_LED]); //invert the value
-        
+                
                 //toggle the LEDs according to the Modbus register values
                 if(g_LEDMappingArr[num_LED].expandr_bus == 0)
                 {
@@ -314,14 +357,14 @@ void loop()
                 {
                     g_LEDMappingArr[num_LED].expandr->digitalWrite1(g_LEDMappingArr[num_LED].expandr_pin, led_state);
                 }
-        
+                
                 if(!led_state)
                 {
                     g_unlock_door = true;
                     holdingRegs[num_LED] = LOW; //reset the Mobbus register state
                 }
             }
-        
+            
             //unlock the magnetic door and start the alarm if any LEDs are on
             if(g_unlock_door)
             {
@@ -330,47 +373,51 @@ void loop()
             }
         }
         
-        //check the door switch for its state
-        byte door_switch = DOOR_SW_PIN;
-        if(g_ioExpandrU5.digitalRead1(door_switch))
+        if(g_unlock_door) //check the door switch for its state only if door is unlock
         {
-            //attach Door switch pin to its Modbus register
-            holdingRegs[DOOR_SW] = door_switch;
-        
-            if(door_switch)
+            byte door_switch = DOOR_SW_PIN;
+            if(g_ioExpandrU5.digitalRead1(door_switch))
             {
-                if(!g_door_is_opened)
-                {
-                    g_door_is_opened = true;
-                    g_ioExpandrU5.digitalWrite1(ALARM_PIN, LOW);
-                    
-                    if(g_timeout_value) //if timer is enabled
-                    {
-                        (void)timer.setTimeout((g_timeout_value * CONV_RATE), timeoutAlarmRoutine);
-                    }
-                }
-            }
-            else
-            {
-                if(g_door_is_opened)
-                {
-                    g_door_is_opened = false;
-                    g_ioExpandrU5.digitalWrite1(ALARM_PIN, LOW);
-
-                    if(g_timeout_value) //if timer is enabled
-                    {
-                        (void)timer.setTimeout((g_timeout_value * CONV_RATE), timeoutLockRoutine);
-                    }
-                }
+                //attach Door switch pin to its Modbus register
+                holdingRegs[DOOR_SW] = door_switch;
                 
-                //user acknowledged - toggle the Magnetic Door lock according its Modbus register value
-                if( (g_unlock_door) && (holdingRegs[MAG_DOOR]) )
+                if(door_switch) //door is opened
                 {
-                    delay(500); //add some delay to ensure door is closed properly before locking
-                    g_ioExpandrU5.digitalWrite1(MAG_DOOR_PIN, LOW);
-                    g_unlock_door = false;
-                    holdingRegs[MAG_DOOR] = LOW; //reset the Mobbus register state
-                    turnOffAllLEDs();
+                    if(!g_door_is_opened)
+                    {
+                        g_door_is_opened = true;
+                        g_ioExpandrU5.digitalWrite1(ALARM_PIN, LOW);
+                        
+                        if(g_timeout_value) //if timer is enabled
+                        {
+                            timer.deleteTimer(g_alarm_timer); //delete the previous set timer
+                            g_alarm_timer = timer.setTimeout((g_timeout_value * CONV_RATE), timeoutAlarmRoutine);
+                        }
+                    }
+                }
+                else //door is closed
+                {
+                    if(g_door_is_opened)
+                    {
+                        g_door_is_opened = false;
+                        g_ioExpandrU5.digitalWrite1(ALARM_PIN, LOW);
+                        
+                        if(g_timeout_value) //if timer is enabled
+                        {
+                            timer.deleteTimer(g_lock_timer); //delete the previous set timer
+                            g_lock_timer = timer.setTimeout((g_timeout_value * CONV_RATE), timeoutLockRoutine);
+                        }
+                    }
+                    
+                    //user acknowledged - toggle the Magnetic Door lock according its Modbus register value
+                    if(holdingRegs[MAG_DOOR])
+                    {
+                        delay(1000); //add some delay to ensure door is closed properly before locking
+                        g_ioExpandrU5.digitalWrite1(MAG_DOOR_PIN, LOW);
+                        g_unlock_door = false;
+                        holdingRegs[MAG_DOOR] = LOW; //reset the Mobbus register state
+                        turnOffAllLEDs();
+                    }
                 }
             }
         }
