@@ -87,6 +87,7 @@ int g_debounce_timer = -1;
 int my_state = LOCKED; //initial state
 int prev_state = LOCKED; //initial state
 byte g_debouncedDoorState = 0; //closed
+unsigned char my_address = 0;
 
 void initLEDsOnExpandr(DTIOI2CtoParallelConverter *io_expandr)
 {
@@ -492,6 +493,11 @@ void setup()
     //get the timer's timeout value
     g_timeout_value = getTimerValue();
     
+    if(0 != g_timeout_value) //if timer is enabled
+    {
+        g_timeout_value += 2;  //add 2 here to get 3/4/5 as the jumper settings are only 1/2/3
+    }
+    
     // parameters(long baudrate, unsigned char ID, unsigned char transmit enable pin, unsigned int holding registers size, unsigned char low latency)
     // The transmit enable pin is used in half duplex communication to activate a MAX485 or similar
     // to deactivate this mode use any value < 2 because 0 & 1 is reserved for Rx & Tx.
@@ -500,7 +506,11 @@ void setup()
 #ifdef HW_TEST
     modbus_configure(115200, 1, RS485_EN_PIN, TOTAL_REGS_SIZE, 0);
 #else
-    modbus_configure(115200, getSlaveAddr(), RS485_EN_PIN, TOTAL_REGS_SIZE, 0);
+    my_address = getSlaveAddr();
+    if(0 != my_address)
+    {
+        modbus_configure(115200, my_address, RS485_EN_PIN, TOTAL_REGS_SIZE, 0);
+    }
 #endif
 
     //initialize the debounce timer
@@ -509,16 +519,13 @@ void setup()
 }
 
 void loop()
-{
+{    
+#ifdef HW_TEST
     // modbus_update() is the only method used in loop(). It returns the total error
     // count since the slave started. You don't have to use it but it's useful
     // for fault finding by the modbus master.
     holdingRegs[TOTAL_ERRORS] = modbus_update(holdingRegs);
     
-    // this is where the "polling" occurs
-    timer.run();
-    
-#ifdef HW_TEST
     byte door_switch = DOOR_SW_PIN;
     if(g_ioExpandrU5.digitalRead1(door_switch))
     {
@@ -557,27 +564,38 @@ void loop()
         g_ioExpandrU5.digitalWrite1(SPARE_PIN, door_switch);
     }
 #else
-    switch(my_state)
+    if(0 != my_address) //only run logic if a valid device address is used
     {
-        case LOCKED:
-            handleLockedState();
-            break;
-
-        case UNLOCKED:
-            handleUnlockedState();
-            break;
-
-        case OPENED:
-            handleOpenedState();
-            break;
-            
-        case CLOSED:
-            handleClosedState();
-            break;
-            
-        case MAINTENANCE:
-            doMaintenance();
-            break;
+        // modbus_update() is the only method used in loop(). It returns the total error
+        // count since the slave started. You don't have to use it but it's useful
+        // for fault finding by the modbus master.
+        holdingRegs[TOTAL_ERRORS] = modbus_update(holdingRegs);
+        
+        // this is where the "polling" occurs
+        timer.run();
+        
+        switch(my_state)
+        {
+            case LOCKED:
+                handleLockedState();
+                break;
+                
+            case UNLOCKED:
+                handleUnlockedState();
+                break;
+                
+            case OPENED:
+                handleOpenedState();
+                break;
+                
+            case CLOSED:
+                handleClosedState();
+                break;
+                
+            case MAINTENANCE:
+                doMaintenance();
+                break;
+        }
     }
 #endif
 }
