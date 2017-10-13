@@ -1,3 +1,6 @@
+// Cabinet Locker Controller System
+// Rev 1.0 (13/10/2017)
+// - Maxtrax
 #include <DTIOI2CtoParallelConverter.h>
 #include <SimpleModbusSlave.h>
 #include <SimpleTimer.h>
@@ -53,6 +56,7 @@ enum _Modbus_reg_t
     TIM_0,
     TIM_1,
     TEST_MODE,
+    TOGGLE_LEDS,
     TOTAL_ERRORS,
     // leave this one
     TOTAL_REGS_SIZE 
@@ -140,9 +144,10 @@ int getTimerValue()
 
 void turnOnOffAllLEDs()
 {
-    //turn on all the LEDS
+    //loop to turn on and off all the LEDS
     for(int num_LED = 0; num_LED <= LED_60; num_LED++)
     {
+        //turn on the LEDS
         if(g_LEDMappingArr[num_LED].expandr_bus == 0)
         {
             g_LEDMappingArr[num_LED].expandr->digitalWrite0(g_LEDMappingArr[num_LED].expandr_pin, LOW); 
@@ -153,11 +158,8 @@ void turnOnOffAllLEDs()
         }
         
         delay(300);
-    }
-    
-    //turn off all the LEDS
-    for(int num_LED = 0; num_LED <= LED_60; num_LED++)
-    {
+
+        //turn off the LEDS
         if(g_LEDMappingArr[num_LED].expandr_bus == 0)
         {
             g_LEDMappingArr[num_LED].expandr->digitalWrite0(g_LEDMappingArr[num_LED].expandr_pin, HIGH); 
@@ -166,7 +168,7 @@ void turnOnOffAllLEDs()
         {
             g_LEDMappingArr[num_LED].expandr->digitalWrite1(g_LEDMappingArr[num_LED].expandr_pin, HIGH);
         }
-        
+
         delay(300);
     }
 }
@@ -339,6 +341,8 @@ void handleLockedState()
         }
     }
 
+    holdingRegs[MAG_DOOR] = LOW; //reset the Modbus register state, if user ack in locked state
+
     prev_state = LOCKED;
 }
 
@@ -348,6 +352,22 @@ void handleUnlockedState()
     {
         //enables the debounce service routine for the door state
         timer.enable(g_debounce_timer);
+    }
+
+    //user acknowledged
+    if(holdingRegs[MAG_DOOR])
+    {
+        holdingRegs[MAG_DOOR] = LOW; //reset the Modbus register state
+
+        //lock the magnetic door and off the alarm
+        g_ioExpandrU5.digitalWrite1(ALARM_PIN, LOW);
+        g_ioExpandrU5.digitalWrite1(MAG_DOOR_PIN, LOW);
+        turnOffAllLEDs();
+        
+        //disables the door switch debounce service routine timer
+        timer.disable(g_debounce_timer);
+        
+        my_state = LOCKED;
     }
     
     prev_state = UNLOCKED;
@@ -367,7 +387,9 @@ void handleOpenedState()
             g_alarm_timer = timer.setTimeout((g_timeout_value * CONV_RATE), timeoutAlarmRoutine);
         }
     }
-
+    
+    holdingRegs[MAG_DOOR] = LOW; //reset the Modbus register state, if user ack in opened state
+    
     prev_state = OPENED;
 }
 
@@ -393,10 +415,10 @@ void handleClosedState()
         
         g_ioExpandrU5.digitalWrite1(MAG_DOOR_PIN, LOW);
         turnOffAllLEDs();
-
+        
         //disables the door switch debounce service routine timer
         timer.disable(g_debounce_timer);
-
+        
         my_state = LOCKED;
     }
     
@@ -405,8 +427,9 @@ void handleClosedState()
 
 void doMaintenance()
 {
-    if(MAINTENANCE != prev_state)
+    if(holdingRegs[TOGGLE_LEDS])
     {
+        holdingRegs[TOGGLE_LEDS] = LOW;
         turnOnOffAllLEDs(); //test on/off all LEDs sequentially
     }
     
