@@ -1,5 +1,5 @@
 // Cabinet Locker Controller System
-// Rev 1.0 (13/10/2017)
+// Rev 1.1 (17/11/2017)
 // - Maxtrax
 #include <DTIOI2CtoParallelConverter.h>
 #include <SimpleModbusSlave.h>
@@ -57,6 +57,7 @@ enum _Modbus_reg_t
     TIM_1,
     TEST_MODE,
     TOGGLE_LEDS,
+    LED_END,
     TOTAL_ERRORS,
     // leave this one
     TOTAL_REGS_SIZE 
@@ -188,6 +189,8 @@ void turnOffAllLEDs()
 
         holdingRegs[num_LED] = LOW; //reset the Modbus register state
     }
+
+    holdingRegs[LED_END] = LOW; //reset the Modbus register state
 }
 
 void timeoutAlarmRoutine()
@@ -294,11 +297,8 @@ void debounceDoorSwitchRoutine()
     }
 }
 
-//returns true if LED is on
-bool checkLEDState()
+void checkLEDState()
 {
-    bool ret = false;
-
     //attach the LED pins to the Modbus registers
     for(int num_LED = 0; num_LED <= LED_60; num_LED++)
     {
@@ -313,15 +313,7 @@ bool checkLEDState()
         {
             g_LEDMappingArr[num_LED].expandr->digitalWrite1(g_LEDMappingArr[num_LED].expandr_pin, led_state);
         }
-        
-        if(!led_state)
-        {
-            ret = true;
-            holdingRegs[num_LED] = LOW; //reset the Modbus register state
-        }
     }
-
-    return ret;
 }
 
 void handleLockedState()
@@ -332,8 +324,11 @@ void handleLockedState()
     }
     else
     {
-        //unlock the magnetic door and start the alarm if any LEDs are on
-        if(checkLEDState())
+        //check LEDs state and turn on accordingly
+        checkLEDState();
+        
+        //unlock the magnetic door and start the alarm if received LED_END command
+        if(holdingRegs[LED_END])
         {
             g_ioExpandrU5.digitalWrite1(MAG_DOOR_PIN, HIGH);
             g_ioExpandrU5.digitalWrite1(ALARM_PIN, HIGH);
